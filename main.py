@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+import os
+import json
+
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 import sympy as sp
 import mpmath as mp
@@ -11,8 +14,41 @@ from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,
     convert_xor,
 )
-
 from sympy.integrals.manualintegrate import manualintegrate
+
+import firebase_admin
+from firebase_admin import credentials, auth
+
+
+# =========================
+# Firebase Admin (Render Secret)
+# =========================
+if not firebase_admin._apps:
+    raw = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if not raw:
+        raise RuntimeError("Missing FIREBASE_SERVICE_ACCOUNT_JSON env var")
+
+    cred_dict = json.loads(raw)
+    cred = credentials.Certificate(cred_dict)
+    firebase_admin.initialize_app(cred)
+
+
+def verify_token(authorization: str | None):
+    """
+    ✅ لازم Authorization: Bearer <Firebase ID Token>
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+
+    token = authorization.split("Bearer ")[1].strip()
+    try:
+        decoded = auth.verify_id_token(token)
+        return decoded  # فيها uid
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 # =========================
@@ -171,10 +207,7 @@ def school_derivative_form(expr: sp.Expr) -> sp.Expr:
         # نجمع حسب log(...) (كل لوغاريتم يظهر)
         logs = sorted(list(num.atoms(sp.log)), key=lambda t: str(t))
         for L in logs:
-            num = sp.collect(num, L)  # <-- هذا هو المهم (يعطي الشكل المدرسي)
-
-        # إذا تحبي عامل x خارج البسط (اختياري)
-        # num = sp.factor(num)
+            num = sp.collect(num, L)
 
         return sp.Mul(num, sp.Pow(den, -1, evaluate=False), evaluate=False)
 
@@ -294,7 +327,10 @@ def health():
 
 
 @app.post("/calc")
-def calc(req: CalcReq):
+def calc(req: CalcReq, authorization: str | None = Header(default=None)):
+    # ✅ حماية: لازم توكن
+    verify_token(authorization)
+
     try:
         expr = parse_math(req.expr)
         tool = (req.tool or "").lower().strip()
@@ -302,8 +338,6 @@ def calc(req: CalcReq):
         # -------- derivative --------
         if tool == "derivative":
             r = sp.diff(expr, x)
-
-            # ✅ هذا هو التبسيط "المدرسي" للمشتقة
             r = school_derivative_form(r)
 
             if is_bad_value(r):
