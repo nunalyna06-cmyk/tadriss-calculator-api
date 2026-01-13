@@ -204,6 +204,10 @@ def school_derivative_form(expr: sp.Expr) -> sp.Expr:
         num = sp.expand(num)
         den = sp.factor(den)
 
+        # ✅ إذا المقام = 1 رجّعي البسط فقط (باش مشتقة x تعطي 1)
+        if den == 1:
+            return school_simplify(num)
+
         # نجمع حسب log(...) (كل لوغاريتم يظهر)
         logs = sorted(list(num.atoms(sp.log)), key=lambda t: str(t))
         for L in logs:
@@ -213,6 +217,7 @@ def school_derivative_form(expr: sp.Expr) -> sp.Expr:
 
     except Exception:
         return school_simplify(expr)
+
 
 
 # =========================
